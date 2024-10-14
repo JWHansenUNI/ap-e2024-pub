@@ -100,7 +100,11 @@ evalTests =
       --
       testCase "KvPutGet" $
         eval' (Let "x" (KvPut (CstInt 0) (CstBool True)) (KvGet (CstInt 0)))
-          @?= ([],Right (ValBool True))
+          @?= ([],Right (ValBool True)),
+      --
+      testCase "KvPutGet2" $
+        eval' (Let "x" (KvPut (Lambda "x" (Var "x")) (CstBool True)) (KvGet (Lambda "x" (Var "x"))))
+          @?= ([],Right (ValBool False))
     ]
 
 tests :: TestTree
