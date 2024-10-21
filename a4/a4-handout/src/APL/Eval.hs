@@ -82,3 +82,13 @@ eval (Print s e1) = do
     ValInt x -> pure $ (ValInt x)
     ValBool x -> pure $ (ValBool x)
     ValFun x y z -> pure $ (ValFun x y z)
+
+eval (KvPut k_exp v_exp) = do
+  k <- eval k_exp
+  v <- eval v_exp
+  evalKvPut k v
+  pure v  -- Return the value after putting it in the store
+
+eval (KvGet k_exp) = do
+  k <- eval k_exp
+  evalKvGet k

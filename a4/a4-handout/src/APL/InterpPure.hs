@@ -13,4 +13,5 @@ runEval = runEval' envEmpty stateInitial
     runEval' r s (Free (PrintOp p m)) =
       let (ps, res) = runEval' r s m
        in (p : ps, res)
+    runEval' r s (Free (TryCatchOp tryOp catchOp)) = runEval' r s $ catch tryOp catchOp
     runEval' _ _ (Free (ErrorOp e)) = ([], Left e)

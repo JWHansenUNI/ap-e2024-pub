@@ -9,11 +9,12 @@ module APL.Monad
     getState,
     putState,
     modifyState,
+    evalPrint,
+    catch,
+    failure,
     evalKvGet,
     evalKvPut,
-    evalPrint,
-    failure,
-    catch,
+    transaction,
     EvalM,
     Val (..),
     EvalOp (..),
@@ -69,19 +70,20 @@ instance (Functor e) => Monad (Free e) where
     where
       h x = x >>= f
 
-
 data EvalOp a
   = ReadOp (Env -> a)
   | StateGetOp (State -> a)
   | StatePutOp State a
   | PrintOp String a
   | ErrorOp Error
+  | TryCatchOp a a
 
 instance Functor EvalOp where
   fmap f (ReadOp k) = ReadOp $ f . k
   fmap f (StateGetOp k) = StateGetOp $ f . k
   fmap f (StatePutOp s m) = StatePutOp s $ f m
   fmap f (PrintOp p m) = PrintOp p $ f m
+  fmap f (TryCatchOp r l) = TryCatchOp (f r) $ f l
   fmap _ (ErrorOp e) = ErrorOp e
 
 type EvalM a = Free EvalOp a
@@ -108,19 +110,29 @@ putState s = Free $ StatePutOp s $ pure ()
 modifyState :: (State -> State) -> EvalM ()
 modifyState f = do
   s <- getState
-  putState $ f s 
+  putState $ f s
 
 evalPrint :: String -> EvalM ()
-evalPrint p = Free $ PrintOp p $ pure () 
+evalPrint p = Free $ PrintOp p $ pure ()
 
 failure :: String -> EvalM a
 failure = Free . ErrorOp
 
 catch :: EvalM a -> EvalM a -> EvalM a
-catch = error "To be completed in assignment 4."
+catch (Free (ErrorOp _)) handler = handler
+catch (Free (ReadOp k)) handler = Free (ReadOp (\env -> catch (k env) handler))
+catch (Free (StateGetOp k)) handler = Free (StateGetOp (\state -> catch (k state) handler))
+catch (Free (StatePutOp state m)) handler = Free (StatePutOp state (catch m handler))
+catch (Free (PrintOp p m)) handler = Free (PrintOp p (catch m handler))
+catch (Free (TryCatchOp tryOp catchOp)) handler = Free (TryCatchOp (catch tryOp catchOp) (catch catchOp handler))
+
+catch try _ = try
 
 evalKvGet :: Val -> EvalM Val
-evalKvGet = error "To be completed in assignment 4."
+evalKvGet = error "TODO"
 
 evalKvPut :: Val -> Val -> EvalM ()
-evalKvPut = error "To be completed in assignment 4."
+evalKvPut = error "TODO"
+
+transaction :: EvalM () -> EvalM ()
+transaction = error "TODO"
