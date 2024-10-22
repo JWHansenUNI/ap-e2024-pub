@@ -3,7 +3,7 @@ module APL.InterpIO (runEvalIO) where
 import APL.Monad
 import APL.Util
 import System.Directory (removeFile)
-import System.IO (hFlush, readFile', stdout)
+import System.IO (hFlush, readFile, stdout)
 
 -- Converts a string into a value. Only 'ValInt's and 'ValBool' are supported.
 readVal :: String -> Maybe Val
@@ -24,7 +24,7 @@ writeDB db s =
 -- 'readDB db' reads the database stored in 'db'.
 readDB :: FilePath -> IO (Either Error State)
 readDB db = do
-  ms <- readFile' db
+  ms <- readFile db
   case unserialize ms of
     Just s -> pure $ pure s
     Nothing -> pure $ Left "Invalid DB."
@@ -32,7 +32,7 @@ readDB db = do
 -- 'copyDB db1 db2' copies 'db1' to 'db2'.
 copyDB :: FilePath -> FilePath -> IO ()
 copyDB db db' = do
-  s <- readFile' db
+  s <- readFile db
   writeFile db' s
 
 -- Removes all key-value pairs from the database file.
