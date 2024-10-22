@@ -65,7 +65,14 @@ pureTests =
       --
       testCase "Div0" $
         eval' (Div (CstInt 7) (CstInt 0))
-          @?= ([], Left "Division by zero")
+          @?= ([], Left "Division by zero"),
+      --
+      testCase "TryCatch" $
+        runEval (Free (TryCatchOp (failure "Oh no!") (pure "Success!"))) @?= ([], Right "Success!"),
+      --
+      testCase "TryCatchDivByZero" $
+        eval' (TryCatch (CstInt 5) (CstInt 1 `Div` CstInt 0)) @?= ([], Right (ValInt 5))
+
     ]
 
 ioTests :: TestTree
@@ -80,7 +87,13 @@ ioTests =
             runEvalIO $ do
               evalPrint s1
               evalPrint s2
-        (out, res) @?= ([s1, s2], Right ())
+        (out, res) @?= ([s1, s2], Right ()),
+
+      --
+      testCase "TryCatchIO" $ do
+        let badEql = CstInt 0 `Eql` CstBool True
+        result <- evalIO' (TryCatch badEql (CstInt 1 `Div` CstInt 0))
+        result @?= Left ("Division by zero" :: Error)
         -- NOTE: This test will give a runtime error unless you replace the
         -- version of `eval` in `APL.Eval` with a complete version that supports
         -- `Print`-expressions. Uncomment at your own risk.
