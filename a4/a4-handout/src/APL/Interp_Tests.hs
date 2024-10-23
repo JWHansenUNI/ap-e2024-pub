@@ -18,6 +18,12 @@ evalIO' = runEvalIO . eval
 tests :: TestTree
 tests = testGroup "Free monad interpreters" [pureTests, ioTests]
 
+put0 :: Val -> Val -> EvalM Val -> EvalM Val
+put0 key val m = Free $ KvPutOp key val m
+
+get0 :: Val -> EvalM Val
+get0 key = Free $ KvGetOp key $ \val -> pure val
+
 pureTests :: TestTree
 pureTests =
   testGroup
@@ -51,6 +57,14 @@ pureTests =
           )
           @?= ([], Right [(ValInt 0, ValInt 5)]),
       --
+      testCase "State" $
+        runEval
+          ( do
+              putState [(ValInt 0, ValInt 1)]
+              modifyState $ map (\(key, _) -> (key, ValInt 5))
+              getState
+          )
+          @?= ([], Right [(ValInt 0, ValInt 5)]),
       testCase "Print" $
         runEval (evalPrint "test")
           @?= (["test"], Right ()),
@@ -71,8 +85,55 @@ pureTests =
         runEval (Free (TryCatchOp (failure "Oh no!") (pure "Success!"))) @?= ([], Right "Success!"),
       --
       testCase "TryCatchDivByZero" $
-        eval' (TryCatch (CstInt 5) (CstInt 1 `Div` CstInt 0)) @?= ([], Right (ValInt 5))
+        eval' (TryCatch (CstInt 5) (CstInt 1 `Div` CstInt 0)) @?= ([], Right (ValInt 5)),
+      --
+      testCase "put0 and get0" $
+        runEval (put0 (ValInt 0) (ValInt 1) (get0 (ValInt 0))) @?= ([], Right (ValInt 1)),
+      --
+      testCase "put put and get" $
+        runEval (put0 (ValInt 0) (ValInt 1) (put0 (ValInt 0) (ValInt 5) (get0 (ValInt 0)))) @?= ([], Right (ValInt 5)),
+      --
+      testCase "put0 and get not found" $
+        runEval (put0 (ValInt 0) (ValInt 1) (get0 (ValInt 1))) @?= ([], Left "Key not found"),
+      --
+      testCase "evalKvPut and Get" $
+        runEval
+          ( do
+              evalKvPut (ValInt 0) (ValInt 1)
+              evalKvGet (ValInt 0)
+          )
+          @?= ([], Right (ValInt 1)),
+      testCase "transaction 1" $
+        runEval (Free (TransactionOp 
+          (Free (KvPutOp (ValInt 0) (ValInt 1) (pure ())))
+          (Free (KvGetOp (ValInt 0) pure))))
+        @?= ([], Right (ValInt 1)),
+      -- Test for TransactionOp: successful transaction
+      testCase "Transaction success" $
+        runEval
+          ( transaction
+              ( do
+                  evalPrint "Success"
+                  evalKvPut (ValInt 0) (ValInt 1)
+              )
+              >> evalKvGet (ValInt 0)
+          )
+          @?= (["Success"], Right (ValInt 1)),
 
+      -- Test for TransactionOp: failed transaction (nested transaction)
+      testCase "Nested transaction rollback" $
+        runEval
+          ( do
+              evalKvPut (ValInt 0) (ValInt 1)
+              transaction
+                ( do
+                    evalKvPut (ValInt 0) (ValInt 2)
+                    transaction (failure "Inner failure!") -- inner transaction fails
+                    evalKvPut (ValInt 0) (ValInt 3)
+                )
+              evalKvGet (ValInt 0)
+          )
+          @?= ([], Left "Inner failure!") -- outer transaction also fails
     ]
 
 ioTests :: TestTree
@@ -93,7 +154,32 @@ ioTests =
       testCase "TryCatchIO" $ do
         let badEql = CstInt 0 `Eql` CstBool True
         result <- evalIO' (TryCatch badEql (CstInt 1 `Div` CstInt 0))
-        result @?= Left ("Division by zero" :: Error)
+        result @?= Left ("Division by zero" :: Error),
+
+      --
+      testCase "IO StatePutOp and StateGetOp" $ do
+        result <- runEvalIO (do
+          Free (StatePutOp [(ValInt 1, ValInt 100), (ValBool True, ValBool False)] (Free (StateGetOp pure))))
+        result @?= Right [(ValInt 1, ValInt 100), (ValBool True, ValBool False)],
+      --
+      testCase "IO KvPutOp and KvGetOp" $ do
+        result <- runEvalIO (do
+          Free (KvPutOp (ValInt 1) (ValInt 0) (Free (KvPutOp (ValInt 2) (ValInt 10) (Free (KvGetOp (ValInt 1) pure))))))
+        result @?= Right (ValInt 0),
+      --
+      testCase "IO KvPutOp and KvGetOp 2" $ do
+        result <- runEvalIO (do
+          Free (KvPutOp (ValInt 1) (ValInt 0) (Free (KvPutOp (ValInt 2) (ValInt 10) (Free (KvGetOp (ValInt 2) pure))))))
+        result @?= Right (ValInt 10),
+      --
+      testCase "IO Missing Key Test" $ do
+        (_, res) <-
+          captureIO ["ValInt 0"] $
+            runEvalIO $
+              Free $ KvPutOp (ValInt 0) (ValInt 1) (Free (KvGetOp (ValInt 1) pure))
+        res @?= Right (ValInt 1)
+
+
         -- NOTE: This test will give a runtime error unless you replace the
         -- version of `eval` in `APL.Eval` with a complete version that supports
         -- `Print`-expressions. Uncomment at your own risk.
