@@ -8,6 +8,7 @@ import APL.Monad
 import APL.Util (captureIO)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
+import APL.Monad (Val(ValInt), EvalOp (KvGetOp, TransactionOp, KvPutOp), failure, evalKvPut)
 
 eval' :: Exp -> ([String], Either Error Val)
 eval' = runEval . eval
@@ -103,37 +104,22 @@ pureTests =
               evalKvGet (ValInt 0)
           )
           @?= ([], Right (ValInt 1)),
+      --
       testCase "transaction 1" $
-        runEval (Free (TransactionOp 
+        runEval (Free (TransactionOp
           (Free (KvPutOp (ValInt 0) (ValInt 1) (pure ())))
           (Free (KvGetOp (ValInt 0) pure))))
         @?= ([], Right (ValInt 1)),
-      -- Test for TransactionOp: successful transaction
-      testCase "Transaction success" $
-        runEval
-          ( transaction
-              ( do
-                  evalPrint "Success"
-                  evalKvPut (ValInt 0) (ValInt 1)
-              )
-              >> evalKvGet (ValInt 0)
-          )
-          @?= (["Success"], Right (ValInt 1)),
-
-      -- Test for TransactionOp: failed transaction (nested transaction)
-      testCase "Nested transaction rollback" $
-        runEval
-          ( do
-              evalKvPut (ValInt 0) (ValInt 1)
-              transaction
-                ( do
-                    evalKvPut (ValInt 0) (ValInt 2)
-                    transaction (failure "Inner failure!") -- inner transaction fails
-                    evalKvPut (ValInt 0) (ValInt 3)
-                )
-              evalKvGet (ValInt 0)
-          )
-          @?= ([], Left "Inner failure!") -- outer transaction also fails
+      --
+      testCase "transaction print failure" $
+        runEval (Free (TransactionOp
+        (Free (PrintOp "Test" (Free (KvPutOp (ValInt 1) (ValInt 0) (Free (KvGetOp (ValInt 0) (\_ -> pure ())))))))
+        (pure "Success!"))) @?= (["Test"], Right "Success!"),
+      --
+      testCase "transaction print failure check if state has been updated in the transaction" $
+        runEval (Free (TransactionOp
+        (Free (PrintOp "Test" (Free (KvPutOp (ValInt 1) (ValInt 0) (Free (KvGetOp (ValInt 0) (\_ -> pure ())))))))
+        (Free (KvGetOp (ValInt 1) pure)))) @?= (["Test"], Left "Key not found")
     ]
 
 ioTests :: TestTree
@@ -177,7 +163,49 @@ ioTests =
           captureIO ["ValInt 0"] $
             runEvalIO $
               Free $ KvPutOp (ValInt 0) (ValInt 1) (Free (KvGetOp (ValInt 1) pure))
-        res @?= Right (ValInt 1)
+        res @?= Right (ValInt 1),
+
+      --
+      testCase "IO Transaction" $ do
+        result <- runEvalIO (do
+          Free (TransactionOp
+            (Free (KvPutOp (ValInt 2) (ValInt 10) (pure ())))
+            (Free (KvGetOp (ValInt 2) pure)))
+          )
+        result @?= Right (ValInt 10),
+      
+      testCase "IO Fail Transaction" $ do
+        (_, res) <-
+          captureIO ["ValInt 1"] $
+            runEvalIO $
+              Free (TransactionOp
+                (Free (KvPutOp (ValInt 2) (ValInt 10) (failure "oh shit")))
+                (Free (KvPutOp (ValInt 1) (ValInt 0) (Free (KvGetOp (ValInt 2) pure)))))
+        res @?= Right (ValInt 0),
+
+        testCase "IO Fail Nested Transaction" $ do
+        (_, res) <-
+          captureIO ["ValInt 1"] $
+            runEvalIO $
+              Free (TransactionOp
+                (Free (KvPutOp (ValInt 2) (ValInt 10) 
+                  (Free (TransactionOp (evalKvPut (ValInt 3) (ValInt 4) >> failure "die") (pure ())))))
+                (Free (KvPutOp (ValInt 1) (ValInt 0) (Free (KvGetOp (ValInt 2) pure)))))
+        res @?= Right (ValInt 10),
+
+        testCase "IO Fail Nested Transaction 2" $ do
+        (_, res) <-
+          captureIO ["ValInt 2"] $
+            runEvalIO $
+              Free (TransactionOp
+                (Free (KvPutOp (ValInt 2) (ValInt 10) 
+                  (Free (TransactionOp (evalKvPut (ValInt 3) (ValInt 4) >> failure "die") (pure ())))))
+                (Free (KvPutOp (ValInt 1) (ValInt 0) (Free (KvGetOp (ValInt 3) pure)))))
+        res @?= Right (ValInt 10)
+
+
+
+
 
 
         -- NOTE: This test will give a runtime error unless you replace the

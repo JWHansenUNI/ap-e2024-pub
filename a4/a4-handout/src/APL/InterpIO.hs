@@ -93,4 +93,12 @@ runEvalIO evalm = do
       case dbState of
         Right state -> runEvalIO' r db (Free (StatePutOp ((key, val) : filter ((/= key) . fst) state) m))
         Left err -> pure $ Left err
+    runEvalIO' r db (Free (TransactionOp void m)) = do
+      withTempDB (\path -> do
+        res' <- runEvalIO' r path void
+        case res' of
+          Right _ -> copyDB path db
+          Left _ -> pure ()
+        )
+      runEvalIO' r db m
     runEvalIO' _ _ (Free (ErrorOp e)) = pure $ Left e

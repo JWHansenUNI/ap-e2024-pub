@@ -21,7 +21,18 @@ runEval = runEval' envEmpty stateInitial
     runEval' r s (Free (KvPutOp key val m)) =
       let newState = (key, val) : filter ((/= key) . fst) s
       in runEval' r newState m
-    runEval' r s (Free (TransactionOp evalmvoid m)) = error "what!"
+    runEval' r s (Free (TransactionOp a m)) =
+      let a' = runEval' r s a in
+        case a' of
+          (s', Right ()) -> do
+            state <- runEval' r s (a >> getState)
+            case state of
+              Right newState ->
+                let (ps, res) = runEval' r newState m 
+                in (s' ++ ps, res)
+              Left e -> ([], Left e)
+          (s', Left _) -> let (ps, res) = runEval' r s m 
+                          in (s' ++ ps, res)
 
 
     runEval' _ _ (Free (ErrorOp e)) = ([], Left e)
