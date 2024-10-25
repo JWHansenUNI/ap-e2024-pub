@@ -3,7 +3,7 @@ module APL.Tests
   )
 where
 
-import APL.AST (Exp (..), subExp)
+import APL.AST (Exp (..), subExp, VName)
 import APL.Error (isVariableError, isDomainError, isTypeError)
 import APL.Check (checkExp)
 import Test.QuickCheck
@@ -15,10 +15,13 @@ import Test.QuickCheck
   , checkCoverage
   , oneof
   , sized
+  , elements
+  , frequency
+  , generate
   )
 
 instance Arbitrary Exp where
-  arbitrary = sized genExp
+  arbitrary = sized (genExp ["var"])
 
   shrink (Add e1 e2) =
     e1 : e2 : [Add e1' e2 | e1' <- shrink e1] ++ [Add e1 e2' | e2' <- shrink e2]
@@ -44,28 +47,78 @@ instance Arbitrary Exp where
     e1 : e2 : [TryCatch e1' e2 | e1' <- shrink e1] ++ [TryCatch e1 e2' | e2' <- shrink e2]
   shrink _ = []
 
-genExp :: Int -> Gen Exp
-genExp 0 = oneof [CstInt <$> arbitrary, CstBool <$> arbitrary]
-genExp size =
-  oneof
-    [ CstInt <$> arbitrary
-    , CstBool <$> arbitrary
-    , Add <$> genExp halfSize <*> genExp halfSize
-    , Sub <$> genExp halfSize <*> genExp halfSize
-    , Mul <$> genExp halfSize <*> genExp halfSize
-    , Div <$> genExp halfSize <*> genExp halfSize
-    , Pow <$> genExp halfSize <*> genExp halfSize
-    , Eql <$> genExp halfSize <*> genExp halfSize
-    , If <$> genExp thirdSize <*> genExp thirdSize <*> genExp thirdSize
-    , Var <$> arbitrary
-    , Let <$> arbitrary <*> genExp halfSize <*> genExp halfSize
-    , Lambda <$> arbitrary <*> genExp (size - 1)
-    , Apply <$> genExp halfSize <*> genExp halfSize 
-    , TryCatch <$> genExp halfSize <*> genExp halfSize
+genExp :: [VName] -> Int -> Gen Exp
+genExp _ 0 =
+  frequency
+    [ (1, CstInt <$> arbitrary)
+    , (1, CstBool <$> arbitrary)
+    ]
+genExp vars size =
+  frequency
+    [ (2, CstInt <$> arbitrary)  -- Increase type-safe constants
+    , (2, CstBool <$> arbitrary) -- Increase type-safe constants
+    , (2, Add <$> genExp vars halfSize <*> genExp vars halfSize)  -- Type error risk, lower frequency
+    , (2, Sub <$> genExp vars halfSize <*> genExp vars halfSize)  -- Type error risk, lower frequency
+    , (1, Mul <$> genExp vars halfSize <*> genExp vars halfSize)  -- Type error risk, much lower
+    , (1, Div <$> genExp vars halfSize <*> divExp)                -- Domain error focus, lower frequency
+    , (1, Pow <$> genExp vars halfSize <*> powExp)                -- Domain error focus, lower frequency
+    , (2, Eql <$> genExp vars halfSize <*> genExp vars halfSize)  -- Type error risk, keep moderate
+    , (1, If <$> genExp vars thirdSize <*> genExp vars thirdSize <*> genExp vars thirdSize)  -- Type safe if properly used
+    , (2, Var <$> genVar vars)                                    -- Type safe variable generation
+    , (24, do  -- Increase frequency of Let, but make sure it's mostly type safe
+          var <- generatedArbVar
+          Let var <$> genExp (var : vars) halfSize <*> genExp vars halfSize
+      )
+    , (24, do  -- Increase frequency of Lambda, ensure type safety
+          var <- generatedArbVar
+          Lambda var <$> genExp (var : vars) (size - 1)
+      )
+    , (1, Apply <$> genExp vars halfSize <*> genExp vars halfSize) -- Type error risk, lower frequency
+    , (1, TryCatch <$> genExp vars halfSize <*> genExp vars halfSize)
     ]
   where
     halfSize = size `div` 2
     thirdSize = size `div` 3
+    generatedArbVar = genVar vars
+
+genVar :: [VName] -> Gen VName
+genVar [] = 
+  frequency
+  [
+    (2, arbitrary),
+    (98, combineThree ["x", "y", "z", "q", "h", "s"])
+  ]
+genVar vars = frequency
+  [
+    (70, elements vars),
+    (30, frequency [
+      (0, arbitrary),
+      (100, combineThree ["x", "y", "z", "q", "h", "s", "t", "l"])
+      ])
+  ]
+
+-- Special case for generating a denominator that is likely to be zero
+divExp :: Gen Exp
+divExp = do
+  denominator <- frequency [(10, pure 0), (90, arbitrary)]
+  numerator <- arbitrary
+  return (Div (CstInt numerator) (CstInt denominator))
+
+-- Special case for generating a power with a negative exponent
+powExp :: Gen Exp
+powExp = do
+  base <- arbitrary
+  exponent <- frequency [(20, pure (-1)), (80, arbitrary)]
+  return (Pow (CstInt base) (CstInt exponent))
+  
+
+combineThree :: [VName] -> Gen VName
+combineThree chars = do
+  v1 <- elements chars
+  v2 <- elements chars
+  v3 <- elements chars
+  return (v1 ++ v2 ++ v3)
+
 
 expCoverage :: Exp -> Property
 expCoverage e = checkCoverage
