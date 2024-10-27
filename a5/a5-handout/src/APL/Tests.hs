@@ -6,6 +6,7 @@ where
 import APL.AST (Exp (..), subExp, VName)
 import APL.Error (isVariableError, isDomainError, isTypeError)
 import APL.Check (checkExp)
+import APL.Parser (parseAPL)
 import Test.QuickCheck
   ( Property
   , Gen
@@ -132,7 +133,11 @@ expCoverage e = checkCoverage
   $ ()
 
 parsePrinted :: Exp -> Bool
-parsePrinted _ = undefined
+parsePrinted e1 =
+  let printed = show e1
+  in case parseAPL "" printed of
+       Right e2 -> e2 == e1 -- Check that parsed expression matches the original
+       Left _ -> False       -- Return False if parsing fails
 
 onlyCheckedErrors :: Exp -> Bool
 onlyCheckedErrors _ = undefined
