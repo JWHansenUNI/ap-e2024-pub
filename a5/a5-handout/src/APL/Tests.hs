@@ -4,9 +4,10 @@ module APL.Tests
 where
 
 import APL.AST (Exp (..), subExp, VName)
-import APL.Error (isVariableError, isDomainError, isTypeError)
+import APL.Error (isVariableError, isDomainError, isTypeError, Error (UnknownVariable, NonInteger, DivisionByZero, NegativeExponent, InvalidEqual, NonBoolean, NonFunction))
 import APL.Check (checkExp)
 import APL.Parser (parseAPL)
+import APL.Eval
 import Test.QuickCheck
   ( Property
   , Gen
@@ -83,7 +84,7 @@ genExp vars size =
     generatedArbVar = genVar vars
 
 genVar :: [VName] -> Gen VName
-genVar [] = 
+genVar [] =
   frequency
   [
     (2, arbitrary),
@@ -111,7 +112,7 @@ powExp = do
   base <- arbitrary
   exponent <- frequency [(20, pure (-1)), (80, arbitrary)]
   return (Pow (CstInt base) (CstInt exponent))
-  
+
 
 combineThree :: [VName] -> Gen VName
 combineThree chars = do
@@ -139,8 +140,75 @@ parsePrinted e1 =
        Right e2 -> e2 == e1 -- Check that parsed expression matches the original
        Left _ -> False       -- Return False if parsing fails
 
+addReplaceErrorToList :: Error -> [Error] -> [Error]
+addReplaceErrorToList e es
+  | e `elem` es = es
+  | otherwise = e:es
+
+makeErrorList :: Exp -> [Error] -> [Error]
+makeErrorList e1 errorList =
+  case e1 of
+    CstInt _ -> errorList
+    CstBool _ -> errorList
+    Var v -> addReplaceErrorToList (UnknownVariable v) errorList
+    Add e1 e2 -> 
+      let
+        newErrorList = addReplaceErrorToList NonInteger errorList
+      in
+      makeErrorList e1 $ makeErrorList e2 newErrorList
+    Sub e1 e2 ->
+      let
+        newErrorList = addReplaceErrorToList NonInteger errorList
+      in makeErrorList e1 $ makeErrorList e2 newErrorList
+    Mul e1 e2 -> let
+      newErrorList = addReplaceErrorToList NonInteger errorList
+      in makeErrorList e1 $ makeErrorList e2 newErrorList
+    Div e1 e2 -> let
+      newErrorList = addReplaceErrorToList NonInteger $ addReplaceErrorToList DivisionByZero errorList
+      in makeErrorList e1 $ makeErrorList e2 newErrorList
+    Pow e1 e2 -> let
+      newErrorList = addReplaceErrorToList NonInteger $ addReplaceErrorToList NegativeExponent errorList
+      in makeErrorList e1 $ makeErrorList e2 newErrorList
+    Eql e1 e2 -> let
+      newErrorList = addReplaceErrorToList InvalidEqual errorList
+      in makeErrorList e1 $ makeErrorList e2 newErrorList
+    If e1 e2 e3 -> let
+      newErrorList = addReplaceErrorToList NonBoolean errorList
+      in makeErrorList e1 $ makeErrorList e2 $ makeErrorList e2 newErrorList
+    Let v e1 e2 ->makeErrorList e1 $ makeErrorList e2 errorList
+    Lambda v e1 -> makeErrorList e1 errorList
+    Apply e1 e2 -> let
+      newErrorList = addReplaceErrorToList NonFunction errorList
+      in makeErrorList e1 $ makeErrorList e2 newErrorList
+    TryCatch e1 e2 -> makeErrorList e1 $ makeErrorList e2 errorList
+
+--Checks that all elements in one array exists in the other
+checkExist :: [Error] -> [Error] -> Bool
+checkExist [] [] = True
+checkExist [] ys = True
+checkExist xs [] = False
+checkExist [x] ys = x `elem` ys
+checkExist (x:xs) ys = do
+  case x `elem` ys of
+    True -> checkExist xs ys
+    otherwise -> False
+
+--Makes sure to check that all elements in one array exists in the other and vice verca
+onlyCheckedErrors2 :: Exp -> Bool
+onlyCheckedErrors2 e1 =
+  let expectedErrorList = makeErrorList e1 []
+      actualErrorList = checkExp e1
+  in (
+      checkExist expectedErrorList actualErrorList && checkExist actualErrorList expectedErrorList
+    )
+
 onlyCheckedErrors :: Exp -> Bool
-onlyCheckedErrors _ = undefined
+onlyCheckedErrors e1 = do
+  let actualErrorList = checkExp e1
+  case runEval (eval e1) of
+    Left err -> err `elem` actualErrorList
+    Right result -> True
+
 
 properties :: [(String, Property)]
 properties =

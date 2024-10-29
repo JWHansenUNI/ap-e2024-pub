@@ -64,6 +64,15 @@ lInteger = lexeme $ do
         Nothing -> num
   pure value
 
+-- Separate `CstInt` handling to enforce parentheses around negatives
+pCstInt :: Parser Exp
+pCstInt = do
+  value <- choice
+    [ lString "(" *> lInteger <* lString ")", -- Parse negative integer with required parentheses
+      lInteger                                             -- Parse positive integer without parentheses
+    ]
+  pure $ CstInt value
+
 lString :: String -> Parser ()
 lString s = lexeme $ void $ chunk s
 
@@ -80,12 +89,12 @@ lBool =
 pAtom :: Parser Exp
 pAtom =
   choice
-    [
-      lKeyword "CstInt" *> (CstInt <$> (optional (lString "(") *> lInteger <* optional (lString ")"))),
+    [ lKeyword "CstInt" *> pCstInt,  -- Handles CstInt with or without parentheses
       lKeyword "CstBool" *> (CstBool <$> lBool),
       lKeyword "Var" *> (Var <$> lVName),
-      lString "(" *> pExp <* lString ")"
+      lString "(" *> pExp <* lString ")" -- Allows any expression inside parentheses
     ]
+
 
 pExp :: Parser Exp
 pExp = choice
