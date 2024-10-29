@@ -1,0 +1,6 @@
+ghci> :l src/APL/Parser.hs Hvis det ikke virker som om dine funktioner er tilgængelige når du kører ghci
+
+Use <$> when you have a function and a functor.
+Use <*> when you have both the function and the value inside functors.
+
+ghci> :module +APL.Tests Test.QuickCheck when you are outside src/APL you can do this 
